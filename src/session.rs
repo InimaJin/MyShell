@@ -1,9 +1,9 @@
 use std::{
     env,
     error::Error,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Command, Stdio, Child},
 };
 
 mod text_processing;
@@ -61,52 +61,60 @@ impl Session {
     is always redirected to the subsequent command.
     Also manages the exit code
     */
-    pub fn execute_input(&mut self) -> Result<(), String> {
+    pub fn execute_input(&mut self) -> Result<(), Box<dyn Error>> {
         let commands_to_run = text_processing::parse_input(&self.input);
-
-        //Process that was run in previous iteration of loop
-        let mut previous_process: Option<std::process::Child> = None;
+        //Holds stdout from command run in previous iteration, as bytes
+        let mut pipe = Vec::new();
+        //Whether stdout should be written to pipe variable or not
+        let mut should_pipe: bool;
+        
         for (i, command) in commands_to_run.iter().enumerate() {
             let program = command[0].as_str();
-
+            if i == commands_to_run.len() - 1 {
+                should_pipe = false;
+            } else {
+                should_pipe = true;
+            }
+            
             if self.builtins.contains(&program) {
-                self.run_builtin(&command);
+                self.run_builtin(&command, &mut pipe, should_pipe)?;
             } else {
                 let mut process_builder = Command::new(program);
                 process_builder.args(&command[1..]);
-                let mut current_process: std::process::Child;
+                //The process being executed with this iteration
+                let mut current_process: Child;
+                
                 let stdio_handle: Stdio;
-                //If this is the first command in commands_to_run
-                if i == 0 {
-                    //If there are more commands following
-                    if commands_to_run.len() > 1 {
-                        stdio_handle = Stdio::piped();
-                    } else {
-                        stdio_handle = Stdio::inherit();
-                    }
-                    process_builder.stdout(stdio_handle);
-                    if let Ok(child) = process_builder.spawn() {
-                        current_process = child;
-                    } else {
-                        self.exit_code = "?".to_string();
-                        return Err(format!("Command '{}' not found.", program));
-                    }
+                //If there are more commands following
+                if should_pipe {
+                    //Stdout of process will go to pipe
+                    stdio_handle = Stdio::piped();
                 } else {
-                    //If this is the last command in commands_to_run
-                    if i == commands_to_run.len() - 1 {
-                        stdio_handle = Stdio::inherit();
-                    } else {
-                        stdio_handle = Stdio::piped();
-                    }
-                    process_builder.stdout(stdio_handle).stdin(Stdio::from(
-                        previous_process.take().unwrap().stdout.unwrap(),
-                    ));
-                    if let Ok(child) = process_builder.spawn() {
-                        current_process = child;
-                    } else {
-                        self.exit_code = "?".to_string();
-                        return Err(format!("Command '{}' not found.", program));
-                    }
+                    //Stdout will display on screen
+                    stdio_handle = Stdio::inherit();
+                }
+                process_builder.stdout(stdio_handle);
+                
+                //If this command follows a pipe
+                if i > 0 {
+                    process_builder.stdin(Stdio::piped());
+                }
+                if let Ok(child) = process_builder.spawn() {
+                    current_process = child;
+                } else {
+                    self.exit_code = "?".to_string();
+                    return Err(Box::from(format!("Command '{}' not found.", program)));
+                }
+                //'Some()', if the stdin of current_process is being captured
+                //i.e., this only executes if i > 0 (=command follows a pipe)
+                if let Some(mut stdin) = current_process.stdin.take() {
+                    //Send stdout from previous command to stdin of this process
+                    stdin.write(&pipe);
+                    pipe.clear();
+                }
+
+                if should_pipe {
+                    current_process.stdout.take().unwrap().read_to_end(&mut pipe);
                 }
 
                 //Wait for process to finish and collect exit status
@@ -117,7 +125,6 @@ impl Session {
                         //No exit code (process was terminated by a signal)
                         self.exit_code = "!".to_string();
                     }
-                    previous_process = Some(current_process);
                 } else {
                     self.exit_code = "?".to_string();
                 }
@@ -131,7 +138,12 @@ impl Session {
     Determines which builtin command has been issued
     and runs the appropriate logic
     */
-    fn run_builtin(&mut self, command: &[String]) -> Result<(), Box<dyn Error>> {
+    fn run_builtin(
+        &mut self,
+        command: &[String],
+        pipe: &mut impl Write,
+        should_pipe: bool,
+    ) -> Result<(), Box<dyn Error>> {
         match command[0].as_str() {
             "cd" => {
                 if let Some(target_path) = command.get(1) {
@@ -142,7 +154,12 @@ impl Session {
                 self.cwd = env::current_dir()?;
             }
             "pwd" => {
-                println!("{}", self.cwd.display());
+                let result = format!("{}", self.cwd.display().to_string());
+                if should_pipe {
+                    write!(pipe, "{}\n", result);
+                } else {
+                    println!("{}", result);
+                }
             }
             "pushd" => {
                 if let Some(target_path) = command.get(1) {
@@ -156,12 +173,14 @@ impl Session {
                     self.cwd = env::current_dir()?;
                     self.dir_stack.push(self.cwd.clone());
                 } else {
-                    println!("No directory specified.");
+                    let msg = "Please specify a directory".to_string();
+                    return Err( Box::from(msg) );
                 }
             }
             "popd" => {
                 if self.dir_stack.len() == 0 {
-                    println!("Directory stack empty.");
+                    let msg = "Directory stack empty.".to_string();
+                    return Err( Box::from(msg) );
                 }
                 //Length >= 2 because of pushd's logic
                 else {
