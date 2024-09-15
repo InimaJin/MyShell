@@ -3,10 +3,11 @@ use std::{
     error::Error,
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio, Child},
+    process::{Child, Command, Stdio},
 };
 
-mod text_processing;
+use crate::instruction::{Instruction, StdoutTo};
+use crate::text_processing;
 
 pub struct Session {
     cwd: PathBuf,                //Current working directory
@@ -59,42 +60,38 @@ impl Session {
     Executes the command(s). If multiple commands are specified
     using pipes, they are executed in order and their stdout
     is always redirected to the subsequent command.
-    Also manages the exit code
+    Also manages the exit code.
     */
     pub fn execute_input(&mut self) -> Result<(), Box<dyn Error>> {
-        let commands_to_run = text_processing::parse_input(&self.input)?;
+        let instructions = text_processing::parse_input(&self.input)?;
         //Holds stdout from command run in previous iteration, as bytes
         let mut pipe = Vec::new();
-        //Whether stdout should be written to pipe variable or not
-        let mut should_pipe: bool;
-        
-        for (i, command) in commands_to_run.iter().enumerate() {
-            let program = command[0].as_str();
-            if i == commands_to_run.len() - 1 {
-                should_pipe = false;
-            } else {
-                should_pipe = true;
-            }
-            
+
+        for (i, instruction) in instructions.iter().enumerate() {
+            let program = instruction.command[0].as_str();
+
             if self.builtins.contains(&program) {
-                self.run_builtin(&command, &mut pipe, should_pipe)?;
+                self.run_builtin(&instruction, &mut pipe)?;
             } else {
                 let mut process_builder = Command::new(program);
-                process_builder.args(&command[1..]);
+                process_builder.args(&instruction.command[1..]);
                 //The process being executed with this iteration
                 let mut current_process: Child;
-                
-                let stdio_handle: Stdio;
-                //If there are more commands following
-                if should_pipe {
-                    //Stdout of process will go to pipe
-                    stdio_handle = Stdio::piped();
-                } else {
-                    //Stdout will display on screen
-                    stdio_handle = Stdio::inherit();
+
+                let mut stdio_handle = Stdio::inherit();
+                match instruction.stdout_to {
+                    StdoutTo::Stdout => {
+                        //Send stdout of process to stdout
+                        stdio_handle = Stdio::inherit();
+                    }
+                    StdoutTo::Pipe => {
+                        //Send stdout of process to pipe for next command
+                        stdio_handle = Stdio::piped();
+                    }
+                    _ => {}
                 }
                 process_builder.stdout(stdio_handle);
-                
+
                 //If this command follows a pipe
                 if i > 0 {
                     process_builder.stdin(Stdio::piped());
@@ -140,13 +137,12 @@ impl Session {
     */
     fn run_builtin(
         &mut self,
-        command: &[String],
+        instruction: &Instruction,
         pipe: &mut impl Write,
-        should_pipe: bool,
     ) -> Result<(), Box<dyn Error>> {
-        match command[0].as_str() {
+        match instruction.command[0].as_str() {
             "cd" => {
-                if let Some(target_path) = command.get(1) {
+                if let Some(target_path) = instruction.command.get(1) {
                     env::set_current_dir(Path::new(target_path))?;
                 } else {
                     //Change to home directory
@@ -155,14 +151,14 @@ impl Session {
             }
             "pwd" => {
                 let result = format!("{}", self.cwd.display().to_string());
-                if should_pipe {
+                if let StdoutTo::Pipe = instruction.stdout_to {
                     write!(pipe, "{}\n", result)?;
                 } else {
                     println!("{}", result);
                 }
             }
             "pushd" => {
-                if let Some(target_path) = command.get(1) {
+                if let Some(target_path) = instruction.command.get(1) {
                     //If dir stack is empty, the current working directory
                     //becomes its first element
                     if self.dir_stack.len() == 0 {
@@ -174,13 +170,13 @@ impl Session {
                     self.dir_stack.push(self.cwd.clone());
                 } else {
                     let msg = "Please specify a directory".to_string();
-                    return Err( Box::from(msg) );
+                    return Err(Box::from(msg));
                 }
             }
             "popd" => {
                 if self.dir_stack.len() == 0 {
                     let msg = "Directory stack empty.".to_string();
-                    return Err( Box::from(msg) );
+                    return Err(Box::from(msg));
                 }
                 //Length >= 2 because of pushd's logic
                 else {

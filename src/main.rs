@@ -1,4 +1,7 @@
+mod instruction;
 mod session;
+mod text_processing;
+
 use session::Session;
 
 fn main() {

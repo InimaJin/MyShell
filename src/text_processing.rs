@@ -1,19 +1,21 @@
-use std::error::Error;
 use home;
+use std::error::Error;
+
+use crate::instruction::{Instruction, StdoutTo};
 
 /*
-Parses the user's input.
-The vector returned by this function holds one or more vectors,
-each representing a command ('subcommand') from within the user's input. Multiple
-commands are separated by pipes as the user enters their input.
+Parses the user's input and returns a vector holding one or more Instruction(s).
+Multiple commands are separated by pipes as the user enters their input,
+resulting in multiple Instructions.
 */
-pub fn parse_input(input: &str) -> Result<Vec<Vec<String>>, Box<dyn Error>> {
-    let mut result = Vec::new();
+pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
+    let mut all_instructions = Vec::new();
+
+    let mut instruction = Instruction::new();
 
     let mut quote_opened = false;
     let mut quote_type = ' ';
     let mut current_element = String::new();
-    let mut subcommand = Vec::new();
     for c in input.chars() {
         if c == '"' || c == '\'' {
             if !quote_opened {
@@ -24,17 +26,18 @@ pub fn parse_input(input: &str) -> Result<Vec<Vec<String>>, Box<dyn Error>> {
             }
         } else if c.is_whitespace() && !quote_opened {
             if current_element.len() != 0 {
-                subcommand.push(current_element);
+                instruction.command.push(current_element);
                 current_element = String::new();
             }
         } else if c == '|' && !quote_opened {
+            instruction.stdout_to = StdoutTo::Pipe;
             if current_element.len() != 0 {
-                subcommand.push(current_element);
+                instruction.command.push(current_element);
                 current_element = String::new();
             }
-            if subcommand.len() != 0 {
-                result.push(subcommand);
-                subcommand = Vec::new();
+            if instruction.command.len() != 0 {
+                all_instructions.push(instruction);
+                instruction = Instruction::new();
             }
         } else if c == '~' && !quote_opened {
             if let Some(pathbuf) = home::home_dir() {
@@ -43,15 +46,17 @@ pub fn parse_input(input: &str) -> Result<Vec<Vec<String>>, Box<dyn Error>> {
                 }
             } else {
                 let msg = "Failed to retrieve home directory.".to_string();
-                return Err( Box::from(msg) );
+                return Err(Box::from(msg));
             }
-        } 
-        else {
+        } else {
             current_element.push_str(c.to_string().as_str());
         }
     }
-    if subcommand.len() != 0 {
-        result.push(subcommand);
+    //The last command in user's input is followed by whitespace and needs
+    //to be added here.
+    if instruction.command.len() != 0 {
+        all_instructions.push(instruction);
     }
-    Ok(result)
+
+    Ok(all_instructions)
 }
