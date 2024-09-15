@@ -10,7 +10,7 @@ mod text_processing;
 
 pub struct Session {
     cwd: PathBuf,                //Current working directory
-    pub exit_code: String,       //Status of last exeuted program
+    pub exit_code: String,       //Status of last executed program
     pub input: String,           //Input user has entered
     builtins: Vec<&'static str>, //Shell builtin commands
     dir_stack: Vec<PathBuf>,
@@ -45,7 +45,7 @@ impl Session {
             parent_dir.push_str(&self.cwd.display().to_string());
         }
         parent_dir.push_str("> ");
-        print!("{}", parent_dir);
+        print!("..{}", parent_dir);
         io::stdout().flush()?;
 
         self.input.clear();
@@ -62,7 +62,7 @@ impl Session {
     Also manages the exit code
     */
     pub fn execute_input(&mut self) -> Result<(), Box<dyn Error>> {
-        let commands_to_run = text_processing::parse_input(&self.input);
+        let commands_to_run = text_processing::parse_input(&self.input)?;
         //Holds stdout from command run in previous iteration, as bytes
         let mut pipe = Vec::new();
         //Whether stdout should be written to pipe variable or not
@@ -105,16 +105,16 @@ impl Session {
                     self.exit_code = "?".to_string();
                     return Err(Box::from(format!("Command '{}' not found.", program)));
                 }
-                //'Some()', if the stdin of current_process is being captured
+                //Some(), if the stdin of current_process is being captured.
                 //i.e., this only executes if i > 0 (=command follows a pipe)
-                if let Some(mut stdin) = current_process.stdin.take() {
-                    //Send stdout from previous command to stdin of this process
-                    stdin.write(&pipe);
+                if let Some(mut child_stdin) = current_process.stdin.take() {
+                    //Write stdout from previous command to stdin of this process
+                    child_stdin.write(&pipe)?;
                     pipe.clear();
                 }
-
-                if should_pipe {
-                    current_process.stdout.take().unwrap().read_to_end(&mut pipe);
+                //Some(), if stdout of current_process is being captured
+                if let Some(mut child_stdout) = current_process.stdout.take() {
+                    child_stdout.read_to_end(&mut pipe)?;
                 }
 
                 //Wait for process to finish and collect exit status
@@ -156,7 +156,7 @@ impl Session {
             "pwd" => {
                 let result = format!("{}", self.cwd.display().to_string());
                 if should_pipe {
-                    write!(pipe, "{}\n", result);
+                    write!(pipe, "{}\n", result)?;
                 } else {
                     println!("{}", result);
                 }
