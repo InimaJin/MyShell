@@ -26,13 +26,23 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
             }
         } else if c.is_whitespace() && !quote_opened {
             if current_element.len() != 0 {
-                instruction.command.push(current_element);
+                if let StdoutTo::File(_) = instruction.stdout_to {
+                    instruction.filename = current_element;
+                } else {
+                    instruction.command.push(current_element);
+                }
                 current_element = String::new();
             }
         } else if c == '|' && !quote_opened {
-            instruction.stdout_to = StdoutTo::Pipe;
+            if let StdoutTo::Stdout = instruction.stdout_to {
+                instruction.stdout_to = StdoutTo::Pipe;
+            }
             if current_element.len() != 0 {
-                instruction.command.push(current_element);
+                if let StdoutTo::File(_) = instruction.stdout_to {
+                    instruction.filename = current_element;
+                } else {
+                    instruction.command.push(current_element);
+                }
                 current_element = String::new();
             }
             if instruction.command.len() != 0 {
@@ -48,10 +58,13 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
                 let msg = "Failed to retrieve home directory.".to_string();
                 return Err(Box::from(msg));
             }
+        } else if c == '>' && !quote_opened {
+            instruction.stdout_to = StdoutTo::File('o');
         } else {
             current_element.push_str(c.to_string().as_str());
         }
     }
+
     //The last command in user's input is followed by whitespace and needs
     //to be added here.
     if instruction.command.len() != 0 {

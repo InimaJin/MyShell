@@ -1,6 +1,7 @@
 use std::{
     env,
     error::Error,
+    fs::File,
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -14,7 +15,8 @@ pub struct Session {
     pub exit_code: String,       //Status of last executed program
     pub input: String,           //Input user has entered
     builtins: Vec<&'static str>, //Shell builtin commands
-    dir_stack: Vec<PathBuf>,
+    dir_stack: Vec<PathBuf>,     //For pushd/ popd
+    pipe: Vec<u8>,               //Stdout from command run in previous iteration, as bytes
 }
 
 impl Session {
@@ -25,6 +27,7 @@ impl Session {
             input: String::new(),
             builtins: vec!["cd", "pwd", "pushd", "popd"],
             dir_stack: vec![],
+            pipe: vec![],
         }
     }
 
@@ -64,21 +67,19 @@ impl Session {
     */
     pub fn execute_input(&mut self) -> Result<(), Box<dyn Error>> {
         let instructions = text_processing::parse_input(&self.input)?;
-        //Holds stdout from command run in previous iteration, as bytes
-        let mut pipe = Vec::new();
 
         for (i, instruction) in instructions.iter().enumerate() {
             let program = instruction.command[0].as_str();
 
             if self.builtins.contains(&program) {
-                self.run_builtin(&instruction, &mut pipe)?;
+                self.run_builtin(&instruction)?;
             } else {
                 let mut process_builder = Command::new(program);
                 process_builder.args(&instruction.command[1..]);
                 //The process being executed with this iteration
                 let mut current_process: Child;
 
-                let mut stdio_handle = Stdio::inherit();
+                let stdio_handle;
                 match instruction.stdout_to {
                     StdoutTo::Stdout => {
                         //Send stdout of process to stdout
@@ -88,7 +89,9 @@ impl Session {
                         //Send stdout of process to pipe for next command
                         stdio_handle = Stdio::piped();
                     }
-                    _ => {}
+                    StdoutTo::File(_) => {
+                        stdio_handle = Stdio::piped();
+                    }
                 }
                 process_builder.stdout(stdio_handle);
 
@@ -106,12 +109,16 @@ impl Session {
                 //i.e., this only executes if i > 0 (=command follows a pipe)
                 if let Some(mut child_stdin) = current_process.stdin.take() {
                     //Write stdout from previous command to stdin of this process
-                    child_stdin.write(&pipe)?;
-                    pipe.clear();
+                    child_stdin.write(&self.pipe)?;
+                    self.pipe.clear();
                 }
                 //Some(), if stdout of current_process is being captured
                 if let Some(mut child_stdout) = current_process.stdout.take() {
-                    child_stdout.read_to_end(&mut pipe)?;
+                    child_stdout.read_to_end(&mut self.pipe)?;
+
+                    if let StdoutTo::File(_) = instruction.stdout_to {
+                        self.write_to_file(&instruction)?;
+                    }
                 }
 
                 //Wait for process to finish and collect exit status
@@ -135,11 +142,7 @@ impl Session {
     Determines which builtin command has been issued
     and runs the appropriate logic
     */
-    fn run_builtin(
-        &mut self,
-        instruction: &Instruction,
-        pipe: &mut impl Write,
-    ) -> Result<(), Box<dyn Error>> {
+    fn run_builtin(&mut self, instruction: &Instruction) -> Result<(), Box<dyn Error>> {
         match instruction.command[0].as_str() {
             "cd" => {
                 if let Some(target_path) = instruction.command.get(1) {
@@ -150,11 +153,14 @@ impl Session {
                 self.cwd = env::current_dir()?;
             }
             "pwd" => {
-                let result = format!("{}", self.cwd.display().to_string());
-                if let StdoutTo::Pipe = instruction.stdout_to {
-                    write!(pipe, "{}\n", result)?;
+                let output = format!("{}", self.cwd.display().to_string());
+                if let StdoutTo::Stdout = instruction.stdout_to {
+                    println!("{}", output);
                 } else {
-                    println!("{}", result);
+                    write!(&mut self.pipe, "{}\n", output)?;
+                    if let StdoutTo::File(_) = instruction.stdout_to {
+                        self.write_to_file(instruction)?;
+                    }
                 }
             }
             "pushd" => {
@@ -194,6 +200,24 @@ impl Session {
                 }
             }
             _ => {}
+        }
+
+        Ok(())
+    }
+
+    /*
+    Invoked by '>' operator.
+    Writes the stdout (held in the pipe) to a file.
+    */
+    fn write_to_file(&mut self, instruction: &Instruction) -> Result<(), Box<dyn Error>> {
+        if instruction.filename.is_empty() {
+            let program = &instruction.command[0];
+            let msg = format!("Please specify target file for output of '{}'.", program);
+            return Err(Box::from(msg));
+        }
+        if let Ok(mut file) = File::create_new(&instruction.filename) {
+            file.write_all(&self.pipe)?;
+            self.pipe.clear();
         }
 
         Ok(())
