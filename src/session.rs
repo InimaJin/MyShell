@@ -13,7 +13,6 @@ use crate::text_processing;
 pub struct Session {
     cwd: PathBuf,                //Current working directory
     pub exit_code: String,       //Status of last executed program
-    pub input: String,           //Input user has entered
     builtins: Vec<&'static str>, //Shell builtin commands
     dir_stack: Vec<PathBuf>,     //For pushd/ popd
     pipe: Vec<u8>,               //Stdout from command run in previous iteration, as bytes
@@ -24,7 +23,6 @@ impl Session {
         Session {
             cwd: env::current_dir().unwrap_or(PathBuf::new()),
             exit_code: String::from("0"),
-            input: String::new(),
             builtins: vec!["cd", "pwd", "pushd", "popd"],
             dir_stack: vec![],
             pipe: vec![],
@@ -35,7 +33,7 @@ impl Session {
     Prompts user for input and
     assigns that data to self.input
     */
-    pub fn prompt_for_input(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn prompt_for_input(&mut self, input: &mut String) -> Result<(), Box<dyn Error>> {
         if self.exit_code != 0.to_string() {
             print!("|{}|", self.exit_code);
         }
@@ -52,34 +50,52 @@ impl Session {
         print!("..{}", parent_dir);
         io::stdout().flush()?;
 
-        self.input.clear();
-        io::stdin().read_line(&mut self.input)?;
+        input.clear();
+        io::stdin().read_line(input)?;
 
         Ok(())
     }
 
     /*
     Input is parsed by parse_input() from text_processing.
+
     Executes the command(s). If multiple commands are specified
     using pipes, they are executed in order and their stdout
     is always redirected to the subsequent command.
+
+    If a subcommand (e.g. ${whoami}) is being executed, it returns
+    Ok(Some(Stdout_of_subcommand_as_string)), otherwise Ok(None).
+
     Also manages the exit code.
     */
-    pub fn execute_input(&mut self) -> Result<(), Box<dyn Error>> {
-        let instructions = text_processing::parse_input(&self.input)?;
-
+    pub fn execute_input(
+        &mut self,
+        as_subcommand: bool,
+        input: &str,
+    ) -> Result<Option<String>, Box<dyn Error>> {
+        let instructions = text_processing::parse_input(input)?;
         for (i, instruction) in instructions.iter().enumerate() {
-            let program = instruction.command[0].as_str();
+            let mut command = instruction.command.clone();
+            let program = command[0].clone();
 
-            if self.builtins.contains(&program) {
-                self.run_builtin(&instruction)?;
+            for subcommand_i in instruction.subcommand_indices.iter() {
+                //Execute the subcommand and store its stdout
+                let result = self.execute_input(true, &command[*subcommand_i])?;
+                if let Some(stdout_of_subcommand) = result {
+                    //Substitute the subcommand with its computed stdout
+                    command[*subcommand_i] = stdout_of_subcommand;
+                }
+            }
+
+            if self.builtins.contains(&&program[..]) {
+                self.run_builtin(&instruction, command, as_subcommand)?;
             } else {
-                let mut process_builder = Command::new(program);
-                process_builder.args(&instruction.command[1..]);
-                //The process being executed with this iteration
+                let mut process_builder = Command::new(&program[..]);
+                process_builder.args(&command[1..]);
+
                 let mut current_process: Child;
 
-                let stdio_handle;
+                let mut stdio_handle;
                 match instruction.stdout_to {
                     StdoutTo::Stdout => {
                         //Send stdout of process to stdout
@@ -93,9 +109,14 @@ impl Session {
                         stdio_handle = Stdio::piped();
                     }
                 }
+
+                if as_subcommand {
+                    stdio_handle = Stdio::piped();
+                }
+
                 process_builder.stdout(stdio_handle);
 
-                //If this command follows a pipe
+                //If current iteration's command follows a pipe
                 if i > 0 {
                     process_builder.stdin(Stdio::piped());
                 }
@@ -110,12 +131,11 @@ impl Session {
                 if let Some(mut child_stdin) = current_process.stdin.take() {
                     //Write stdout from previous command to stdin of this process
                     child_stdin.write(&self.pipe)?;
-                    self.pipe.clear();
                 }
                 //Some(), if stdout of current_process is being captured
                 if let Some(mut child_stdout) = current_process.stdout.take() {
+                    self.pipe.clear();
                     child_stdout.read_to_end(&mut self.pipe)?;
-
                     if let StdoutTo::File(_) = instruction.stdout_to {
                         self.write_to_file(&instruction)?;
                     }
@@ -135,17 +155,28 @@ impl Session {
             }
         }
 
-        Ok(())
+        if as_subcommand {
+            let mut string = String::from_utf8(self.pipe.clone())?;
+            string = string.trim().to_string();
+            return Ok(Some(string));
+        }
+
+        Ok(None)
     }
 
     /*
     Determines which builtin command has been issued
     and runs the appropriate logic
     */
-    fn run_builtin(&mut self, instruction: &Instruction) -> Result<(), Box<dyn Error>> {
-        match instruction.command[0].as_str() {
+    fn run_builtin(
+        &mut self,
+        instruction: &Instruction,
+        command: Vec<String>,
+        as_subcommand: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        match command[0].as_str() {
             "cd" => {
-                if let Some(target_path) = instruction.command.get(1) {
+                if let Some(target_path) = command.get(1) {
                     env::set_current_dir(Path::new(target_path))?;
                 } else {
                     //Change to home directory
@@ -155,16 +186,19 @@ impl Session {
             "pwd" => {
                 let output = format!("{}", self.cwd.display().to_string());
                 if let StdoutTo::Stdout = instruction.stdout_to {
-                    println!("{}", output);
-                } else {
-                    write!(&mut self.pipe, "{}\n", output)?;
-                    if let StdoutTo::File(_) = instruction.stdout_to {
-                        self.write_to_file(instruction)?;
+                    if !as_subcommand {
+                        println!("{}", output);
+                        return Ok(());
                     }
+                }
+                //self.pipe.clear();
+                write!(&mut self.pipe, "{}\n", output)?;
+                if let StdoutTo::File(_) = instruction.stdout_to {
+                    self.write_to_file(instruction)?;
                 }
             }
             "pushd" => {
-                if let Some(target_path) = instruction.command.get(1) {
+                if let Some(target_path) = command.get(1) {
                     //If dir stack is empty, the current working directory
                     //becomes its first element
                     if self.dir_stack.len() == 0 {
