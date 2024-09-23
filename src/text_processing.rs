@@ -15,9 +15,12 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
 
     let mut quote_opened = false;
     let mut quote_type = ' ';
-    let mut subcommand_opened = false;
+    //Keep track of the number of subcommands open in current iteration
+    let mut subs_opened = 0;
     let mut current_element = String::new();
-    for (i, c) in input.chars().enumerate() {
+    let chars: Vec<char> = input.chars().collect();
+    for (i, c_ref) in chars.iter().enumerate() {
+        let c = *c_ref;
         if c == '"' || c == '\'' {
             if !quote_opened {
                 quote_type = c;
@@ -25,7 +28,7 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
             } else if quote_opened && c == quote_type {
                 quote_opened = false;
             }
-        } else if c.is_whitespace() && !quote_opened && !subcommand_opened {
+        } else if c.is_whitespace() && !quote_opened && subs_opened == 0 {
             if current_element.len() != 0 {
                 if let StdoutTo::File(_) = instruction.stdout_to {
                     instruction.filename = current_element;
@@ -34,7 +37,7 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
                 }
                 current_element = String::new();
             }
-        } else if c == '|' && !quote_opened && !subcommand_opened {
+        } else if c == '|' && !quote_opened && subs_opened == 0 {
             if let StdoutTo::Stdout = instruction.stdout_to {
                 instruction.stdout_to = StdoutTo::Pipe;
             }
@@ -62,18 +65,31 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
         } else if c == '>' && !quote_opened {
             instruction.stdout_to = StdoutTo::File('o');
         } else if c == '$' && !quote_opened {
-            subcommand_opened = true;
-        } else if subcommand_opened {
-            if c != '{' && c != '}' && !quote_opened {
+            if i < chars.len() - 1 && chars[i+1] == '{' {
+                subs_opened += 1;
+            }
+            if subs_opened > 1 {
                 current_element.push_str(c.to_string().as_str());
-            } else if c == '}' && !quote_opened {
-                subcommand_opened = false;
-                instruction.command.push(current_element);
-                instruction
-                    .subcommand_indices
-                    .push(instruction.command.len() - 1);
+            }
+        } else if subs_opened > 0 && !quote_opened {
+            if c == '{' {
+                if subs_opened > 1 {
+                    current_element.push_str(c.to_string().as_str());
+                }
+            } else if c == '}' {
+                subs_opened -= 1;
+                if subs_opened == 0 {
+                    instruction.command.push(current_element);
+                    instruction
+                        .subcommand_indices
+                        .push(instruction.command.len() - 1);
 
-                current_element = String::new();
+                    current_element = String::new();
+                } else {
+                    current_element.push_str(c.to_string().as_str());
+                }
+            } else {
+                current_element.push_str(c.to_string().as_str());
             }
         } else {
             current_element.push_str(c.to_string().as_str());

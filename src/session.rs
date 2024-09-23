@@ -31,7 +31,7 @@ impl Session {
 
     /*
     Prompts user for input and
-    assigns that data to self.input
+    assigns that data to the input variable
     */
     pub fn prompt_for_input(&mut self, input: &mut String) -> Result<(), Box<dyn Error>> {
         if self.exit_code != 0.to_string() {
@@ -86,6 +86,7 @@ impl Session {
                     command[*subcommand_i] = stdout_of_subcommand;
                 }
             }
+
 
             if self.builtins.contains(&&program[..]) {
                 self.run_builtin(&instruction, command, as_subcommand)?;
