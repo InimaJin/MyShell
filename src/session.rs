@@ -7,8 +7,10 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
-use crate::instruction::{Instruction, StdoutTo};
-use crate::text_processing;
+use crate::{
+    instruction::{Instruction, StdoutTo},
+    text_processing, utils,
+};
 
 pub struct Session {
     cwd: PathBuf,                //Current working directory
@@ -87,7 +89,6 @@ impl Session {
                 }
             }
 
-
             if self.builtins.contains(&&program[..]) {
                 self.run_builtin(&instruction, command, as_subcommand)?;
             } else {
@@ -130,7 +131,7 @@ impl Session {
                 //Some(), if the stdin of current_process is being captured.
                 //i.e., this only executes if i > 0 (=command follows a pipe)
                 if let Some(mut child_stdin) = current_process.stdin.take() {
-                    //Write stdout from previous command to stdin of this process
+                    //Write stdout from previous command (now in pipe) to stdin of this process
                     child_stdin.write(&self.pipe)?;
                 }
                 //Some(), if stdout of current_process is being captured
@@ -180,7 +181,8 @@ impl Session {
                 if let Some(target_path) = command.get(1) {
                     env::set_current_dir(Path::new(target_path))?;
                 } else {
-                    //Change to home directory
+                    let home_pathbuf = utils::home_dir()?;
+                    env::set_current_dir(home_pathbuf);
                 }
                 self.cwd = env::current_dir()?;
             }
@@ -192,7 +194,7 @@ impl Session {
                         return Ok(());
                     }
                 }
-                //self.pipe.clear();
+                self.pipe.clear();
                 write!(&mut self.pipe, "{}\n", output)?;
                 if let StdoutTo::File(_) = instruction.stdout_to {
                     self.write_to_file(instruction)?;

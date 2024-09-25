@@ -1,6 +1,7 @@
 mod instruction;
 mod session;
 mod text_processing;
+mod utils;
 
 use session::Session;
 

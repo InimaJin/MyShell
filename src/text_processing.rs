@@ -1,7 +1,9 @@
-use home;
 use std::error::Error;
 
-use crate::instruction::{Instruction, StdoutTo};
+use crate::{
+    instruction::{Instruction, StdoutTo},
+    utils,
+};
 
 /*
 Parses the user's input and returns a vector holding one or more Instruction(s).
@@ -54,18 +56,13 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
                 instruction = Instruction::new();
             }
         } else if c == '~' && !quote_opened {
-            if let Some(pathbuf) = home::home_dir() {
-                if let Some(str_slice) = pathbuf.to_str() {
-                    current_element.push_str(str_slice);
-                }
-            } else {
-                let msg = "Failed to retrieve home directory.".to_string();
-                return Err(Box::from(msg));
-            }
+            let home_pathbuf = utils::home_dir()?;
+            let home_string = format!("{}", home_pathbuf.display());
+            current_element.push_str(home_string.as_str());
         } else if c == '>' && !quote_opened {
             instruction.stdout_to = StdoutTo::File('o');
         } else if c == '$' && !quote_opened {
-            if i < chars.len() - 1 && chars[i+1] == '{' {
+            if i < chars.len() - 1 && chars[i + 1] == '{' {
                 subs_opened += 1;
             }
             if subs_opened > 1 {

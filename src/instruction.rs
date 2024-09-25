@@ -9,9 +9,9 @@ pub enum StdoutTo {
 //Template for building a single process later on
 #[derive(Debug)]
 pub struct Instruction {
-    pub command: Vec<String>, //Command to execute
-    pub stdout_to: StdoutTo,  //See enum StdoutTo
-    pub filename: String,     //Empty if not writing stdout to file
+    pub command: Vec<String>,           //Command to execute
+    pub stdout_to: StdoutTo,            //See enum StdoutTo
+    pub filename: String,               //Empty if not writing stdout to file
     pub subcommand_indices: Vec<usize>, //Indices of subcommands within this command
 }
 impl Instruction {
