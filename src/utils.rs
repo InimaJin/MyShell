@@ -1,5 +1,5 @@
 use home;
-use std::{error::Error, path::PathBuf};
+use std::path::PathBuf;
 
 pub fn home_dir() -> Result<PathBuf, String> {
     if let Some(pathbuf) = home::home_dir() {

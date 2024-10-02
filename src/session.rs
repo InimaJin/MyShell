@@ -182,7 +182,7 @@ impl Session {
                     env::set_current_dir(Path::new(target_path))?;
                 } else {
                     let home_pathbuf = utils::home_dir()?;
-                    env::set_current_dir(home_pathbuf);
+                    env::set_current_dir(home_pathbuf)?;
                 }
                 self.cwd = env::current_dir()?;
             }
