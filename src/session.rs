@@ -1,11 +1,13 @@
 use std::{
     env,
     error::Error,
-    fs::File,
+    fs,
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };
+
+use termion::{color, style};
 
 use crate::{
     instruction::{Instruction, StdoutTo},
@@ -37,19 +39,27 @@ impl Session {
     */
     pub fn prompt_for_input(&mut self, input: &mut String) -> Result<(), Box<dyn Error>> {
         if self.exit_code != 0.to_string() {
-            print!("|{}|", self.exit_code);
+            print!(
+                "{red}{bold}|{exit_code}|{reset}",
+                red = color::Fg(color::Red),
+                bold = style::Bold,
+                exit_code = self.exit_code,
+                reset = style::Reset
+            );
         }
-        let mut parent_dir = String::new();
+        let mut prompt = String::new();
+        //Trying to fetch the last component of cwd
         if let Some(os_str) = self.cwd.file_name() {
             if let Some(str_slice) = os_str.to_str() {
-                parent_dir.push_str(&format!("{}", str_slice));
+                prompt.push_str(&format!("..{}", str_slice));
             }
         }
-        if parent_dir.len() == 0 {
-            parent_dir.push_str(&self.cwd.display().to_string());
+        if prompt.is_empty() {
+            //E.g. if cwd is the "/" dir
+            prompt.push_str(&self.cwd.display().to_string());
         }
-        parent_dir.push_str("> ");
-        print!("..{}", parent_dir);
+        prompt.push_str("> ");
+        print!("{}", prompt);
         io::stdout().flush()?;
 
         input.clear();
@@ -82,11 +92,11 @@ impl Session {
 
             for subcommand_i in instruction.subcommand_indices.iter() {
                 //Execute the subcommand and store its stdout
-                let result = self.execute_input(true, &command[*subcommand_i])?;
-                if let Some(stdout_of_subcommand) = result {
-                    //Substitute the subcommand with its computed stdout
-                    command[*subcommand_i] = stdout_of_subcommand;
-                }
+                let output = self.execute_input(true, &command[*subcommand_i])?;
+                //Substitute the subcommand with its computed stdout.
+                //Unwrap() will not panic, since at this point,
+                //output is Some() because as_subcommand was set to true.
+                command[*subcommand_i] = output.unwrap();
             }
 
             if self.builtins.contains(&&program[..]) {
@@ -138,8 +148,8 @@ impl Session {
                 if let Some(mut child_stdout) = current_process.stdout.take() {
                     self.pipe.clear();
                     child_stdout.read_to_end(&mut self.pipe)?;
-                    if let StdoutTo::File(_) = instruction.stdout_to {
-                        self.write_to_file(&instruction)?;
+                    if let StdoutTo::File(mode) = instruction.stdout_to {
+                        self.write_to_file(&instruction, mode)?;
                     }
                 }
 
@@ -158,9 +168,9 @@ impl Session {
         }
 
         if as_subcommand {
-            let mut string = String::from_utf8(self.pipe.clone())?;
-            string = string.trim().to_string();
-            return Ok(Some(string));
+            let mut command_output = String::from_utf8(self.pipe.clone())?;
+            command_output = command_output.trim().to_string();
+            return Ok(Some(command_output));
         }
 
         Ok(None)
@@ -191,13 +201,13 @@ impl Session {
                 if let StdoutTo::Stdout = instruction.stdout_to {
                     if !as_subcommand {
                         println!("{}", output);
-                        return Ok(());
                     }
-                }
-                self.pipe.clear();
-                write!(&mut self.pipe, "{}\n", output)?;
-                if let StdoutTo::File(_) = instruction.stdout_to {
-                    self.write_to_file(instruction)?;
+                } else {
+                    self.pipe.clear();
+                    write!(&mut self.pipe, "{}\n", output)?;
+                    if let StdoutTo::File(mode) = instruction.stdout_to {
+                        self.write_to_file(instruction, mode)?;
+                    }
                 }
             }
             "pushd" => {
@@ -212,12 +222,14 @@ impl Session {
                     self.cwd = env::current_dir()?;
                     self.dir_stack.push(self.cwd.clone());
                 } else {
+                    self.exit_code = "!".to_string();
                     let msg = "Please specify a directory".to_string();
                     return Err(Box::from(msg));
                 }
             }
             "popd" => {
                 if self.dir_stack.len() == 0 {
+                    self.exit_code = "!".to_string();
                     let msg = "Directory stack empty.".to_string();
                     return Err(Box::from(msg));
                 }
@@ -239,6 +251,8 @@ impl Session {
             _ => {}
         }
 
+        self.exit_code = "0".to_string();
+
         Ok(())
     }
 
@@ -246,16 +260,30 @@ impl Session {
     Invoked by '>' operator.
     Writes the stdout (held in the pipe) to a file.
     */
-    fn write_to_file(&mut self, instruction: &Instruction) -> Result<(), Box<dyn Error>> {
+    fn write_to_file(
+        &mut self,
+        instruction: &Instruction,
+        mode: char,
+    ) -> Result<(), Box<dyn Error>> {
         if instruction.filename.is_empty() {
             let program = &instruction.command[0];
             let msg = format!("Please specify target file for output of '{}'.", program);
             return Err(Box::from(msg));
         }
-        if let Ok(mut file) = File::create_new(&instruction.filename) {
-            file.write_all(&self.pipe)?;
-            self.pipe.clear();
+
+        let mut data_to_write = Vec::new();
+        match mode {
+            'o' => {
+                data_to_write.append(&mut self.pipe);
+            }
+            'a' => {
+                data_to_write = fs::read(&instruction.filename)?;
+                data_to_write.append(&mut self.pipe);
+            }
+            _ => {}
         }
+
+        fs::write(&instruction.filename, &data_to_write)?;
 
         Ok(())
     }

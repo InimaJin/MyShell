@@ -4,6 +4,7 @@ mod text_processing;
 mod utils;
 
 use session::Session;
+use termion::style;
 
 fn main() {
     let mut session = Session::build();
@@ -23,7 +24,12 @@ fn main() {
         }
 
         if let Err(msg) = session.execute_input(false, &input) {
-            eprintln!("Shell error:\n{}", msg);
+            eprintln!(
+                "{}Shell error:{}\n{}",
+                style::Bold,
+                style::Reset,
+                msg
+            );
         };
         input = String::new();
     }

@@ -3,7 +3,7 @@
 pub enum StdoutTo {
     Stdout,     //Send to stdout
     Pipe,       //pipe to stdin of subsequent process
-    File(char), //Write to file (TO-DO: char represents write mode (overwrite/ append))
+    File(char), //Write to file (mode indicated by char; o = overwrite, a = append)
 }
 
 //Template for building a single process later on

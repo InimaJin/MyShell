@@ -60,7 +60,18 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
             let home_string = format!("{}", home_pathbuf.display());
             current_element.push_str(home_string.as_str());
         } else if c == '>' && !quote_opened {
-            instruction.stdout_to = StdoutTo::File('o');
+            if let StdoutTo::File(_) = instruction.stdout_to {
+                continue;
+            }
+            //Overwrite file
+            let mut write_mode = 'o';
+            if let Some(next_char) = chars.get(i + 1) {
+                if *next_char == c {
+                    //Append to file
+                    write_mode = 'a';
+                }
+            }
+            instruction.stdout_to = StdoutTo::File(write_mode);
         } else if c == '$' && !quote_opened {
             if i < chars.len() - 1 && chars[i + 1] == '{' {
                 subs_opened += 1;
