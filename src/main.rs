@@ -1,20 +1,27 @@
+use std::io;
+
 mod instruction;
 mod session;
 mod text_processing;
+mod user;
 mod utils;
 
 use session::Session;
-use termion::style;
+use user::{Input, Output};
 
 fn main() {
+    let mut stdout = io::stdout();
     let mut session = Session::build();
-    let mut input = String::new();
-
+    let mut result;
+    let mut input: String;
     loop {
-        if let Err(e) = session.prompt_for_input(&mut input) {
+        result = Input::prompt(&mut stdout, &session.exit_code, &session.cwd);
+        if let Err(e) = result {
             eprintln!("ERROR: {}", e);
             break;
-        };
+        } else {
+            input = result.unwrap();
+        }
         if input.trim() == "exit" {
             println!("Goodbye.");
             break;
@@ -24,13 +31,8 @@ fn main() {
         }
 
         if let Err(msg) = session.execute_input(false, &input) {
-            eprintln!(
-                "{}Shell error:{}\n{}",
-                style::Bold,
-                style::Reset,
-                msg
-            );
-        };
-        input = String::new();
+            Output::shell_error(&mut stdout, msg);
+        }
+        input.clear();
     }
 }

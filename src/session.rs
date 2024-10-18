@@ -2,12 +2,10 @@ use std::{
     env,
     error::Error,
     fs,
-    io::{self, Read, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };
-
-use termion::{color, style};
 
 use crate::{
     instruction::{Instruction, StdoutTo},
@@ -15,7 +13,7 @@ use crate::{
 };
 
 pub struct Session {
-    cwd: PathBuf,                //Current working directory
+    pub cwd: PathBuf,            //Current working directory
     pub exit_code: String,       //Status of last executed program
     builtins: Vec<&'static str>, //Shell builtin commands
     dir_stack: Vec<PathBuf>,     //For pushd/ popd
@@ -31,41 +29,6 @@ impl Session {
             dir_stack: vec![],
             pipe: vec![],
         }
-    }
-
-    /*
-    Prompts user for input and
-    assigns that data to the input variable
-    */
-    pub fn prompt_for_input(&mut self, input: &mut String) -> Result<(), Box<dyn Error>> {
-        if self.exit_code != 0.to_string() {
-            print!(
-                "{red}{bold}|{exit_code}|{reset}",
-                red = color::Fg(color::Red),
-                bold = style::Bold,
-                exit_code = self.exit_code,
-                reset = style::Reset
-            );
-        }
-        let mut prompt = String::new();
-        //Trying to fetch the last component of cwd
-        if let Some(os_str) = self.cwd.file_name() {
-            if let Some(str_slice) = os_str.to_str() {
-                prompt.push_str(&format!("..{}", str_slice));
-            }
-        }
-        if prompt.is_empty() {
-            //E.g. if cwd is the "/" dir
-            prompt.push_str(&self.cwd.display().to_string());
-        }
-        prompt.push_str("> ");
-        print!("{}", prompt);
-        io::stdout().flush()?;
-
-        input.clear();
-        io::stdin().read_line(input)?;
-
-        Ok(())
     }
 
     /*
@@ -128,7 +91,7 @@ impl Session {
 
                 process_builder.stdout(stdio_handle);
 
-                //If current iteration's command follows a pipe
+                //If current iteration's command (instruction) follows a pipe
                 if i > 0 {
                     process_builder.stdin(Stdio::piped());
                 }
