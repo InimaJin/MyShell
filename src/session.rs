@@ -21,7 +21,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn build() -> Self {
+    pub fn new() -> Self {
         Session {
             cwd: env::current_dir().unwrap_or(PathBuf::new()),
             exit_code: String::from("0"),
@@ -52,6 +52,9 @@ impl Session {
         for (i, instruction) in instructions.iter().enumerate() {
             let mut command = instruction.command.clone();
             let program = command[0].clone();
+            if program == "ls" {
+                command.push("--color=auto".to_string());
+            }
 
             for subcommand_i in instruction.subcommand_indices.iter() {
                 //Execute the subcommand and store its stdout
