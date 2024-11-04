@@ -49,7 +49,7 @@ impl<'a> Input<'a> {
         }
         let mut prompt_color = Color::White;
         if exit_code != "0" {
-            prompt_color = Color::Red;
+            prompt_color = Color::DarkRed;
         }
         prompt.push_str("> ");
         execute!(

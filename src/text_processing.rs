@@ -102,7 +102,11 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
         } else {
             current_element.push_str(c.to_string().as_str());
             if i == input.len() - 1 {
-                instruction.command.push(current_element.clone());
+                if let StdoutTo::File(_) = instruction.stdout_to {
+                    instruction.filename = current_element.clone();
+                } else {
+                    instruction.command.push(current_element.clone());
+                }
             }
         }
     }

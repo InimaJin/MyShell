@@ -53,8 +53,11 @@ impl Session {
             let mut command = instruction.command.clone();
             let program = command[0].clone();
             if program == "ls" {
-                command.push("--color=auto".to_string());
+                //command.insert(1, "--color=auto".to_string());
             }
+
+            println!("\n\r{instruction:?}");
+
 
             for subcommand_i in instruction.subcommand_indices.iter() {
                 //Execute the subcommand and store its stdout
