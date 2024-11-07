@@ -56,9 +56,6 @@ impl Session {
                 //command.insert(1, "--color=auto".to_string());
             }
 
-            println!("\n\r{instruction:?}");
-
-
             for subcommand_i in instruction.subcommand_indices.iter() {
                 //Execute the subcommand and store its stdout
                 let output = self.execute_input(true, &command[*subcommand_i])?;

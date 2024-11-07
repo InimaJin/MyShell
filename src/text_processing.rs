@@ -107,8 +107,13 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
                 } else {
                     instruction.command.push(current_element.clone());
                 }
+                current_element.clear();
             }
         }
+    }
+
+    if !current_element.is_empty() {
+        instruction.command.push(current_element);
     }
 
     //The last command in user's input is followed by whitespace and needs
