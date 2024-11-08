@@ -9,7 +9,7 @@ use crossterm::{
     cursor::{MoveLeft, MoveRight},
     event::{self, Event, KeyCode, KeyModifiers},
     execute, queue,
-    style::{Attribute, Color, Colors, Print, SetAttribute, SetColors},
+    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
     terminal::{self, Clear, ClearType},
 };
 
@@ -48,19 +48,18 @@ impl<'a> Input<'a> {
             prompt.push_str(&cwd.display().to_string());
         }
         let mut prompt_color = Color::White;
+        let text_color = prompt_color;
         if exit_code != "0" {
             prompt_color = Color::DarkRed;
         }
         prompt.push_str("> ");
         execute!(
             self.stdout,
-            //SetAttribute(Attribute::Bold),
-            SetColors(Colors {
-                foreground: Some(prompt_color),
-                background: None
-            }),
+            SetAttribute(Attribute::Bold),
+            SetForegroundColor(prompt_color),
             Print(prompt),
-            SetAttribute(Attribute::Reset)
+            SetForegroundColor(text_color), //If prompt is read, user input should still be white
+            SetAttribute(Attribute::NormalIntensity)
         )?;
 
         terminal::enable_raw_mode()?;
@@ -92,7 +91,7 @@ impl<'a> Input<'a> {
                                 let finished_input =
                                     self.input.iter().map(|c| c.to_string()).collect::<String>();
                                 terminal::disable_raw_mode()?;
-                                execute!(self.stdout, Print("\r\n"))?;
+                                execute!(self.stdout, ResetColor, Print("\r\n"))?;
                                 utils::write_history(&finished_input)?;
                                 return Ok(finished_input);
                             }
@@ -226,10 +225,7 @@ impl Output {
             stdout,
             Print(format!(
                 "{}{}Shell error:{}\n{}\n",
-                SetColors(Colors {
-                    foreground: Some(Color::DarkRed),
-                    background: None
-                }),
+                SetForegroundColor(Color::DarkRed),
                 SetAttribute(Attribute::Bold),
                 SetAttribute(Attribute::Reset),
                 err

@@ -45,8 +45,8 @@ impl Session {
     */
     pub fn execute_input(
         &mut self,
-        as_subcommand: bool,
         input: &str,
+        as_subcommand: bool,
     ) -> Result<Option<String>, Box<dyn Error>> {
         let instructions = text_processing::parse_input(input)?;
         for (i, instruction) in instructions.iter().enumerate() {
@@ -58,7 +58,7 @@ impl Session {
 
             for subcommand_i in instruction.subcommand_indices.iter() {
                 //Execute the subcommand and store its stdout
-                let output = self.execute_input(true, &command[*subcommand_i])?;
+                let output = self.execute_input(&command[*subcommand_i], true)?;
                 //Substitute the subcommand with its computed stdout.
                 //Unwrap() will not panic, since at this point,
                 //output is Some() because as_subcommand was set to true.

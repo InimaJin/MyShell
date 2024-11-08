@@ -31,7 +31,7 @@ fn main() {
             continue;
         }
 
-        if let Err(msg) = session.execute_input(false, &input) {
+        if let Err(msg) = session.execute_input(&input, false) {
             Output::shell_error(input_control.stdout, msg);
         }
         input_control.input.clear();
