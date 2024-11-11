@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossterm::{
-    cursor::{MoveLeft, MoveRight},
+    cursor::{self, MoveLeft, MoveRight},
     event::{self, Event, KeyCode, KeyModifiers},
     execute, queue,
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
@@ -22,7 +22,7 @@ arrow key functionality (cursor movement, history navigation) etc.
 pub struct Input<'a> {
     pub stdout: &'a mut Stdout, //For writing to stdout
     pub input: Vec<char>,       //Vector holding user's input, updated in real time
-    input_cursor: usize,        //x-location of terminal cursor relative to prompt (leftmost is 0)
+    input_cursor: (usize, usize),        //x-location of terminal cursor relative to prompt (leftmost is 0)
 }
 pub struct Output;
 
@@ -31,7 +31,7 @@ impl<'a> Input<'a> {
         Self {
             stdout,
             input: Vec::new(),
-            input_cursor: 0,
+            input_cursor: (0, 0),
         }
     }
 
@@ -63,7 +63,7 @@ impl<'a> Input<'a> {
         )?;
 
         terminal::enable_raw_mode()?;
-        self.input_cursor = 0;
+        self.input_cursor = (0, cursor::position().unwrap().1 as usize);
         //For navigating through history file using the
         //arrow up/down keys
         let mut history_pointer: Option<usize> = None;
@@ -77,45 +77,45 @@ impl<'a> Input<'a> {
                             KeyCode::Char(ch) => {
                                 if key_ev.modifiers == KeyModifiers::CONTROL && ch == 'c' {
                                 } else {
-                                    if self.input_cursor < self.input.len() {
+                                    if self.input_cursor.0 < self.input.len() {
                                         self.insert_char(ch)?;
                                     } else {
                                         //Character has to be appended
                                         self.input.push(ch);
                                         execute!(self.stdout, Print(ch))?;
                                     }
-                                    self.input_cursor += 1;
+                                    self.input_cursor.0 += 1;
                                 }
                             }
                             KeyCode::Enter => {
                                 let finished_input =
                                     self.input.iter().map(|c| c.to_string()).collect::<String>();
-                                terminal::disable_raw_mode()?;
                                 execute!(self.stdout, ResetColor, Print("\r\n"))?;
                                 utils::write_history(&finished_input)?;
+                                terminal::disable_raw_mode()?;
                                 return Ok(finished_input);
                             }
                             KeyCode::Left => {
-                                if self.input_cursor > 0 {
-                                    self.input_cursor -= 1;
+                                if self.input_cursor.0 > 0 {
+                                    self.input_cursor.0 -= 1;
                                     execute!(self.stdout, MoveLeft(1))?;
                                 }
                             }
                             KeyCode::Right => {
-                                if self.input_cursor < self.input.len() {
-                                    self.input_cursor += 1;
+                                if self.input_cursor.0 < self.input.len() {
+                                    self.input_cursor.0 += 1;
                                     execute!(self.stdout, MoveRight(1))?;
                                 }
                             }
                             KeyCode::Backspace => {
-                                if self.input_cursor > 0 {
+                                if self.input_cursor.0 > 0 {
                                     queue!(
                                         self.stdout,
-                                        MoveLeft(self.input_cursor as u16),
+                                        MoveLeft(self.input_cursor.0 as u16),
                                         Clear(ClearType::UntilNewLine),
                                     )?;
-                                    if self.input_cursor < self.input.len() {
-                                        self.input.remove(self.input_cursor - 1);
+                                    if self.input_cursor.0 < self.input.len() {
+                                        self.input.remove(self.input_cursor.0 - 1);
                                         queue!(
                                             self.stdout,
                                             Print(
@@ -125,7 +125,7 @@ impl<'a> Input<'a> {
                                                     .collect::<String>()
                                             ),
                                             MoveLeft(
-                                                (self.input.len() - self.input_cursor + 1) as u16
+                                                (self.input.len() - self.input_cursor.0 + 1) as u16
                                             )
                                         )?;
                                     } else {
@@ -141,7 +141,7 @@ impl<'a> Input<'a> {
                                         )?;
                                     }
                                     self.stdout.flush()?;
-                                    self.input_cursor -= 1;
+                                    self.input_cursor.0 -= 1;
                                 }
                             }
                             //Navigating through history
@@ -173,7 +173,7 @@ impl<'a> Input<'a> {
                                 execute!(self.stdout, Print(next_command))?;
 
                                 self.input = next_command.chars().collect();
-                                self.input_cursor = self.input.len();
+                                self.input_cursor.0 = self.input.len();
                             }
                             _ => {}
                         }
@@ -189,8 +189,8 @@ impl<'a> Input<'a> {
     leaving the prompt itself in place
     */
     fn clear_prompt(&mut self) -> Result<(), Box<dyn Error>> {
-        if self.input_cursor != 0 {
-            queue!(self.stdout, MoveLeft(self.input_cursor as u16))?;
+        if self.input_cursor.0 != 0 {
+            queue!(self.stdout, MoveLeft(self.input_cursor.0 as u16))?;
         }
         queue!(self.stdout, Clear(ClearType::UntilNewLine))?;
 
@@ -204,14 +204,14 @@ impl<'a> Input<'a> {
     what was displayed before
     */
     fn insert_char(&mut self, ch: char) -> Result<(), Box<dyn Error>> {
-        self.input.insert(self.input_cursor, ch);
-        if self.input_cursor > 0 {
-            queue!(self.stdout, MoveLeft(self.input_cursor as u16))?;
+        self.input.insert(self.input_cursor.0, ch);
+        if self.input_cursor.0 > 0 {
+            queue!(self.stdout, MoveLeft(self.input_cursor.0 as u16))?;
         }
         queue!(
             self.stdout,
             Print(self.input.iter().map(|c| c.to_string()).collect::<String>()),
-            MoveLeft((self.input.len() - self.input_cursor - 1) as u16)
+            MoveLeft((self.input.len() - self.input_cursor.0 - 1) as u16)
         )?;
         self.stdout.flush()?;
 
@@ -230,6 +230,6 @@ impl Output {
                 SetAttribute(Attribute::Reset),
                 err
             ))
-        );
+        ).unwrap();
     }
 }

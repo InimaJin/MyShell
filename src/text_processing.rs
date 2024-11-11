@@ -118,7 +118,13 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
         }
 
         if push_allowed {
-            current_element.push(c);
+            if temp_string.is_empty() { 
+                //If none of the above conditions were met, simply
+                //push the character
+                current_element.push(c);
+            } else {
+                current_element.push_str(&temp_string);
+            }
             if i == input.len() - 1 {
                 if let StdoutTo::File(_) = instruction.stdout_to {
                     instruction.filename = current_element.clone();

@@ -25,7 +25,7 @@ impl Session {
         Session {
             cwd: env::current_dir().unwrap_or(PathBuf::new()),
             exit_code: String::from("0"),
-            builtins: vec!["cd", "pwd", "pushd", "popd"],
+            builtins: vec!["cd", "pwd", "pushd", "popd", "history"],
             dir_stack: vec![],
             pipe: vec![],
         }
@@ -152,6 +152,7 @@ impl Session {
         command: Vec<String>,
         as_subcommand: bool,
     ) -> Result<(), Box<dyn Error>> {
+        let mut output = String::new();
         match command[0].as_str() {
             "cd" => {
                 if let Some(target_path) = command.get(1) {
@@ -163,18 +164,7 @@ impl Session {
                 self.cwd = env::current_dir()?;
             }
             "pwd" => {
-                let output = format!("{}", self.cwd.display().to_string());
-                if let StdoutTo::Stdout = instruction.stdout_to {
-                    if !as_subcommand {
-                        println!("{}", output);
-                    }
-                } else {
-                    self.pipe.clear();
-                    write!(&mut self.pipe, "{}\n", output)?;
-                    if let StdoutTo::File(mode) = instruction.stdout_to {
-                        self.write_to_file(instruction, mode)?;
-                    }
-                }
+                output = format!("{}\r\n", self.cwd.display().to_string());
             }
             "pushd" => {
                 if let Some(target_path) = command.get(1) {
@@ -214,10 +204,39 @@ impl Session {
                     }
                 }
             }
+            "history" => {
+                let history_result = utils::read_history();
+                if let Err(e) = history_result {
+                    return Err(Box::from(e));
+                }
+                let history_string = String::from_utf8(history_result.unwrap()).unwrap();
+                for (i, line) in history_string.lines().enumerate() {
+                    output.push_str(
+                        &format!("{} {}\r\n", i, line)
+                    );
+                }
+            }
             _ => {}
         }
 
-        self.exit_code = "0".to_string();
+        //Executes if builtin command wants to print something
+        if !output.is_empty() {
+            let mut write_to_pipe = true;
+            if let StdoutTo::Stdout = instruction.stdout_to {
+                write_to_pipe = false;
+            }
+            
+            if !as_subcommand && !write_to_pipe {
+                print!("{}", output);
+                return Ok(());
+            }
+            
+            self.pipe.clear();
+            write!(&mut self.pipe, "{}", output)?;
+            if let StdoutTo::File(mode) = instruction.stdout_to {
+                self.write_to_file(instruction, mode)?;
+            }
+        }
 
         Ok(())
     }

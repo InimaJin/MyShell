@@ -33,6 +33,8 @@ fn main() {
 
         if let Err(msg) = session.execute_input(&input, false) {
             Output::shell_error(input_control.stdout, msg);
+        } else {
+            session.exit_code = "0".to_string();
         }
         input_control.input.clear();
     }

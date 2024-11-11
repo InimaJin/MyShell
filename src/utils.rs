@@ -45,6 +45,9 @@ pub fn write_history(input: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/* 
+Returns the contents of the history file as bytes.
+*/
 pub fn read_history() -> Result<Vec<u8>, Box<dyn Error>> {
     let mut histfile_path = config_dir()?;
     histfile_path.push("history");
