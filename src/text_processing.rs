@@ -85,7 +85,7 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
                 }
                 instruction.stdout_to = StdoutTo::File(write_mode);
             } else if c == '$' {
-                if i < chars.len() - 1 && chars[i + 1] == '{' {
+                if let Some('{') = chars.get(i + 1) {
                     subs_opened += 1;
                 }
                 if subs_opened > 1 {
@@ -118,7 +118,7 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
         }
 
         if push_allowed {
-            if temp_string.is_empty() { 
+            if temp_string.is_empty() {
                 //If none of the above conditions were met, simply
                 //push the character
                 current_element.push(c);

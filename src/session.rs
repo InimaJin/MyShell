@@ -48,17 +48,24 @@ impl Session {
         input: &str,
         as_subcommand: bool,
     ) -> Result<Option<String>, Box<dyn Error>> {
-        let instructions = text_processing::parse_input(input)?;
-        for (i, instruction) in instructions.iter().enumerate() {
+        let mut instructions = text_processing::parse_input(input)?;
+        for (i, instruction) in instructions.iter_mut().enumerate() {
             let mut command = instruction.command.clone();
             let program = command[0].clone();
             if program == "ls" {
-                //command.insert(1, "--color=auto".to_string());
+                command.insert(1, "--color=auto".to_string());
+                //Since we have inserted something at index 1, alle the subcommand indices are now 1 below what they should be
+                for subcommand_i in instruction.subcommand_indices.iter_mut() {
+                    *subcommand_i += 1;
+                }
             }
 
-            for subcommand_i in instruction.subcommand_indices.iter() {
+            //println!("{instruction:?}");
+
+            for subcommand_i in instruction.subcommand_indices.iter_mut() {
                 //Execute the subcommand and store its stdout
                 let output = self.execute_input(&command[*subcommand_i], true)?;
+                //println!("{subcommand_i}");
                 //Substitute the subcommand with its computed stdout.
                 //Unwrap() will not panic, since at this point,
                 //output is Some() because as_subcommand was set to true.
@@ -98,6 +105,7 @@ impl Session {
                 if i > 0 {
                     process_builder.stdin(Stdio::piped());
                 }
+
                 if let Ok(child) = process_builder.spawn() {
                     current_process = child;
                 } else {
@@ -211,9 +219,7 @@ impl Session {
                 }
                 let history_string = String::from_utf8(history_result.unwrap()).unwrap();
                 for (i, line) in history_string.lines().enumerate() {
-                    output.push_str(
-                        &format!("{} {}\r\n", i, line)
-                    );
+                    output.push_str(&format!("{} {}\r\n", i, line));
                 }
             }
             _ => {}
@@ -225,12 +231,12 @@ impl Session {
             if let StdoutTo::Stdout = instruction.stdout_to {
                 write_to_pipe = false;
             }
-            
+
             if !as_subcommand && !write_to_pipe {
                 print!("{}", output);
                 return Ok(());
             }
-            
+
             self.pipe.clear();
             write!(&mut self.pipe, "{}", output)?;
             if let StdoutTo::File(mode) = instruction.stdout_to {

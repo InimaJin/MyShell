@@ -1,5 +1,7 @@
 use home;
-use std::{error::Error, fs, path::PathBuf};
+use std::{
+    error::Error, fs, os::unix::fs::PermissionsExt, path::PathBuf
+};
 
 pub fn home_dir() -> Result<PathBuf, String> {
     if let Some(pathbuf) = home::home_dir() {
@@ -10,11 +12,12 @@ pub fn home_dir() -> Result<PathBuf, String> {
     }
 }
 
+/*
+Creates the config directory (~/.config/myshell) if nonexistent and returns the path
+*/
 pub fn config_dir() -> Result<PathBuf, Box<dyn Error>> {
-    let mut config_dir = PathBuf::new();
-    if let Ok(home_dir) = home_dir() {
-        config_dir = home_dir;
-    }
+    let mut config_dir: PathBuf;
+    config_dir = home_dir()?;
 
     for element in [".config", "myshell"] {
         config_dir.push(element);
@@ -26,6 +29,9 @@ pub fn config_dir() -> Result<PathBuf, Box<dyn Error>> {
     Ok(config_dir)
 }
 
+/*
+Writes the user's input to history file located at the path <config_dir>/history
+*/
 pub fn write_history(input: &str) -> Result<(), Box<dyn Error>> {
     if input.len() == 0 {
         return Ok(());
@@ -45,7 +51,7 @@ pub fn write_history(input: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/* 
+/*
 Returns the contents of the history file as bytes.
 */
 pub fn read_history() -> Result<Vec<u8>, Box<dyn Error>> {
@@ -53,4 +59,36 @@ pub fn read_history() -> Result<Vec<u8>, Box<dyn Error>> {
     histfile_path.push("history");
     let history = fs::read(histfile_path)?;
     Ok(history)
+}
+
+pub fn bin_dir_contents() -> Result<Vec<String>, Box<dyn Error>> {
+    let mut contents = Vec::new();
+    if let Ok(read_dir) = fs::read_dir("/bin/") {
+        contents = read_dir
+            .map(|result| {
+                if let Ok(dir_entry) = result {
+                    dir_entry.path()
+                } else {
+                    PathBuf::new()
+                }
+            }).filter(|pathbuf| {
+                if let Ok(metadata) = pathbuf.metadata() {
+                    metadata.permissions().mode() & 0o111 != 0
+                } else {
+                    false
+                }
+            }).map(|pathbuf| {
+                let mut filename_string = String::new();
+                if let Some(os_str) = pathbuf.file_name() {
+                    if let Some(str_slice) = os_str.to_str() {
+                        filename_string = str_slice.to_string();
+                    }
+                }
+                
+                filename_string
+            })
+            .collect();
+    }
+        
+    Ok(contents)
 }
