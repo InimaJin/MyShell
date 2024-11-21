@@ -11,7 +11,7 @@ Multiple commands are separated by pipes as the user enters their input,
 resulting in multiple Instructions.
 */
 pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
-    let mut all_instructions = Vec::new();
+    let mut all_instructions: Vec<Instruction> = Vec::new();
 
     let mut instruction = Instruction::new();
 
@@ -26,6 +26,11 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
     let mut push_allowed: bool;
     let chars: Vec<char> = input.chars().collect();
     for (i, c_ref) in chars.iter().enumerate() {
+        if let None = instruction.read_from_pipe {
+            if let Some(prev_instruction) = all_instructions.last() {
+                if let StdoutTo::Pipe = prev_instruction.stdout_to { instruction.read_from_pipe = Some(()) } 
+            }
+        }
         push_allowed = true;
         let c = *c_ref;
         if c == '"' || c == '\'' {

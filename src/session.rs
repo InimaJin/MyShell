@@ -49,34 +49,30 @@ impl Session {
         as_subcommand: bool,
     ) -> Result<Option<String>, Box<dyn Error>> {
         let mut instructions = text_processing::parse_input(input)?;
-        for (i, instruction) in instructions.iter_mut().enumerate() {
-            let mut command = instruction.command.clone();
-            let program = command[0].clone();
+        for instruction in instructions.iter_mut() {
+            let program = instruction.command[0].clone();
             if program == "ls" {
-                command.insert(1, "--color=auto".to_string());
-                //Since we have inserted something at index 1, alle the subcommand indices are now 1 below what they should be
+                instruction.command.insert(1, "--color=auto".to_string());
+                //Since we have inserted something at index 1, all the subcommand indices are now 1 below what they should be
                 for subcommand_i in instruction.subcommand_indices.iter_mut() {
                     *subcommand_i += 1;
                 }
             }
 
-            //println!("{instruction:?}");
-
             for subcommand_i in instruction.subcommand_indices.iter_mut() {
                 //Execute the subcommand and store its stdout
-                let output = self.execute_input(&command[*subcommand_i], true)?;
-                //println!("{subcommand_i}");
+                let output = self.execute_input(&instruction.command[*subcommand_i], true)?;
                 //Substitute the subcommand with its computed stdout.
                 //Unwrap() will not panic, since at this point,
                 //output is Some() because as_subcommand was set to true.
-                command[*subcommand_i] = output.unwrap();
+                instruction.command[*subcommand_i] = output.unwrap();
             }
 
             if self.builtins.contains(&&program[..]) {
-                self.run_builtin(&instruction, command, as_subcommand)?;
+                self.run_builtin(instruction, as_subcommand)?;
             } else {
                 let mut process_builder = Command::new(&program[..]);
-                process_builder.args(&command[1..]);
+                process_builder.args(&instruction.command[1..]);
 
                 let mut current_process: Child;
 
@@ -102,7 +98,7 @@ impl Session {
                 process_builder.stdout(stdio_handle);
 
                 //If current iteration's command (instruction) follows a pipe
-                if i > 0 {
+                if let Some(()) = instruction.read_from_pipe {
                     process_builder.stdin(Stdio::piped());
                 }
 
@@ -113,7 +109,7 @@ impl Session {
                     return Err(Box::from(format!("Command '{}' not found.", program)));
                 }
                 //Some(), if the stdin of current_process is being captured.
-                //i.e., this only executes if i > 0 (=command follows a pipe)
+                //i.e., this only executes if instruction.read_from_pipe == true
                 if let Some(mut child_stdin) = current_process.stdin.take() {
                     //Write stdout from previous command (now in pipe) to stdin of this process
                     child_stdin.write(&self.pipe)?;
@@ -157,13 +153,13 @@ impl Session {
     fn run_builtin(
         &mut self,
         instruction: &Instruction,
-        command: Vec<String>,
+        //command: &Vec<String>,
         as_subcommand: bool,
     ) -> Result<(), Box<dyn Error>> {
         let mut output = String::new();
-        match command[0].as_str() {
+        match instruction.command[0].as_str() {
             "cd" => {
-                if let Some(target_path) = command.get(1) {
+                if let Some(target_path) = instruction.command.get(1) {
                     env::set_current_dir(Path::new(target_path))?;
                 } else {
                     let home_pathbuf = utils::home_dir()?;
@@ -175,10 +171,10 @@ impl Session {
                 output = format!("{}\r\n", self.cwd.display().to_string());
             }
             "pushd" => {
-                if let Some(target_path) = command.get(1) {
+                if let Some(target_path) = instruction.command.get(1) {
                     //If dir stack is empty, the current working directory
                     //becomes its first element
-                    if self.dir_stack.len() == 0 {
+                    if self.dir_stack.is_empty() {
                         self.dir_stack.push(self.cwd.clone());
                     }
                     let pathbuf = PathBuf::from(target_path);

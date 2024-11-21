@@ -10,6 +10,7 @@ pub enum StdoutTo {
 #[derive(Debug)]
 pub struct Instruction {
     pub command: Vec<String>,           //Command to execute
+    pub read_from_pipe: Option<()>,     //Some(()), if this instruction follows a pipe, otherwise None
     pub stdout_to: StdoutTo,            //See enum StdoutTo
     pub filename: String,               //Empty if not writing stdout to file
     pub subcommand_indices: Vec<usize>, //Indices of subcommands within this command
@@ -18,6 +19,7 @@ impl Instruction {
     pub fn new() -> Self {
         Self {
             command: Vec::new(),
+            read_from_pipe: None,
             stdout_to: StdoutTo::Stdout,
             filename: String::new(),
             subcommand_indices: Vec::new(),
