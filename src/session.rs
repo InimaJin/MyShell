@@ -13,19 +13,18 @@ use crate::{
 };
 
 pub struct Session {
-    pub cwd: PathBuf,            //Current working directory
-    pub exit_code: String,       //Status of last executed program
-    builtins: Vec<&'static str>, //Shell builtin commands
-    dir_stack: Vec<PathBuf>,     //For pushd/ popd
-    pipe: Vec<u8>,               //Stdout from command run in previous iteration, as bytes
+    pub cwd: PathBuf,        //Current working directory
+    pub exit_code: String,   //Status of last executed program
+    dir_stack: Vec<PathBuf>, //For pushd/ popd
+    pipe: Vec<u8>,           //Stdout from command run in previous iteration, as bytes
 }
 
 impl Session {
+    const BUILTINS: [&str; 5] = ["cd", "pwd", "pushd", "popd", "history"];
     pub fn new() -> Self {
         Session {
             cwd: env::current_dir().unwrap_or(PathBuf::new()),
             exit_code: String::from("0"),
-            builtins: vec!["cd", "pwd", "pushd", "popd", "history"],
             dir_stack: vec![],
             pipe: vec![],
         }
@@ -59,22 +58,21 @@ impl Session {
                 }
             }
 
-            for subcommand_i in instruction.subcommand_indices.iter_mut() {
+            for &subcommand_i in instruction.subcommand_indices.iter() {
                 //Execute the subcommand and store its stdout
-                let output = self.execute_input(&instruction.command[*subcommand_i], true)?;
+                let output = self.execute_input(&instruction.command[subcommand_i], true)?;
                 //Substitute the subcommand with its computed stdout.
                 //Unwrap() will not panic, since at this point,
                 //output is Some() because as_subcommand was set to true.
-                instruction.command[*subcommand_i] = output.unwrap();
+                instruction.command[subcommand_i] = output.unwrap();
             }
 
-            if self.builtins.contains(&&program[..]) {
+            if Self::BUILTINS.contains(&&program[..]) {
                 self.run_builtin(instruction, as_subcommand)?;
             } else {
                 let mut process_builder = Command::new(&program[..]);
                 process_builder.args(&instruction.command[1..]);
 
-                let mut current_process: Child;
 
                 let mut stdio_handle;
                 match instruction.stdout_to {
@@ -98,10 +96,11 @@ impl Session {
                 process_builder.stdout(stdio_handle);
 
                 //If current iteration's command (instruction) follows a pipe
-                if let Some(()) = instruction.read_from_pipe {
+                if instruction.read_from_pipe {
                     process_builder.stdin(Stdio::piped());
                 }
 
+                let mut current_process: Child;
                 if let Ok(child) = process_builder.spawn() {
                     current_process = child;
                 } else {
@@ -153,7 +152,6 @@ impl Session {
     fn run_builtin(
         &mut self,
         instruction: &Instruction,
-        //command: &Vec<String>,
         as_subcommand: bool,
     ) -> Result<(), Box<dyn Error>> {
         let mut output = String::new();
@@ -162,8 +160,7 @@ impl Session {
                 if let Some(target_path) = instruction.command.get(1) {
                     env::set_current_dir(Path::new(target_path))?;
                 } else {
-                    let home_pathbuf = utils::home_dir()?;
-                    env::set_current_dir(home_pathbuf)?;
+                    env::set_current_dir(utils::home_dir()?)?;
                 }
                 self.cwd = env::current_dir()?;
             }
@@ -209,11 +206,8 @@ impl Session {
                 }
             }
             "history" => {
-                let history_result = utils::read_history();
-                if let Err(e) = history_result {
-                    return Err(Box::from(e));
-                }
-                let history_string = String::from_utf8(history_result.unwrap()).unwrap();
+                let history_result = utils::read_history()?;
+                let history_string = String::from_utf8(history_result)?;
                 for (i, line) in history_string.lines().enumerate() {
                     output.push_str(&format!("{} {}\r\n", i, line));
                 }
@@ -223,10 +217,11 @@ impl Session {
 
         //Executes if builtin command wants to print something
         if !output.is_empty() {
-            let mut write_to_pipe = true;
-            if let StdoutTo::Stdout = instruction.stdout_to {
-                write_to_pipe = false;
-            }
+            let write_to_pipe = if let StdoutTo::Stdout = instruction.stdout_to {
+                false
+            } else {
+                true
+            };
 
             if !as_subcommand && !write_to_pipe {
                 print!("{}", output);

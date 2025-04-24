@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    io::{Stdout, Write},
+    io::{self, Stdout, Write},
     path::PathBuf,
     time::Duration,
 };
@@ -19,24 +19,24 @@ use crate::utils;
 For managing user input aspects, such as
 arrow key functionality (cursor movement, history navigation) etc.
 */
-pub struct Input<'a> {
-    pub stdout: &'a mut Stdout, //For writing to stdout
+pub struct Input {
+    pub stdout: Stdout, //For writing to stdout
     pub input: Vec<char>,       //Vector holding user's input, updated in real time
     input_cursor: usize,        //x-location of terminal cursor relative to prompt (leftmost is 0)
 }
 pub struct Output;
 
-impl<'a> Input<'a> {
-    pub fn new(stdout: &'a mut Stdout) -> Self {
+impl Input {
+    pub fn new() -> Self {
         Self {
-            stdout,
+            stdout: io::stdout(),
             input: Vec::new(),
             input_cursor: 0,
         }
     }
 
     /*
-    Displays the prompt and calls read_keys() to get the user's input, finally returns it
+    Displays the prompt and calls read_keys() to get the user's input, finally returns it as a String.
     */
     pub fn prompt(&mut self, exit_code: &str, cwd: &PathBuf) -> Result<String, Box<dyn Error>> {
         let mut prompt = String::new();
@@ -79,14 +79,14 @@ impl<'a> Input<'a> {
         //For navigating through history file using the
         //arrow up/down keys
         let mut history_pointer: Option<usize> = None;
-        let mut ev: Event;
         loop {
             if event::poll(Duration::from_millis(100))? {
-                ev = event::read()?;
+                let ev = event::read()?;
                 if let Event::Key(key_ev) = ev {
                     match key_ev.code {
                         KeyCode::Char(ch) => {
                             if key_ev.modifiers == KeyModifiers::CONTROL && ch == 'c' {
+                                //TODO
                             } else {
                                 if self.input_cursor < self.input.len() {
                                     self.insert_char(ch)?;
@@ -156,18 +156,17 @@ impl<'a> Input<'a> {
                         //Navigating through history
                         KeyCode::Up | KeyCode::Down => {
                             //true => "Up" key was pressed. false => "Down" key pressed
-                            let up: bool;
-                            if let KeyCode::Up = key_ev.code {
-                                up = true
+                            let up = if let KeyCode::Up = key_ev.code {
+                                true
                             } else {
-                                up = false;
-                            }
+                                false
+                            };
                             let history = String::from_utf8(utils::read_history()?)?;
                             let lines = history.lines().collect::<Vec<&str>>();
                             if let Some(val) = history_pointer {
                                 if up && val != 0 {
                                     history_pointer = Some(val - 1);
-                                } else if !up && val != lines.len() - 1 {
+                                } else if !up && val < lines.len() - 1 {
                                     history_pointer = Some(val + 1);
                                 }
                             } else {
@@ -175,7 +174,7 @@ impl<'a> Input<'a> {
                             }
                             let next_command = lines[history_pointer.unwrap()];
 
-                            if self.input.len() != 0 {
+                            if !self.input.is_empty() {
                                 self.clear_prompt()?;
                             }
                             //Write the new input into the prompt

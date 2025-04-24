@@ -26,9 +26,9 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
     let mut push_allowed: bool;
     let chars: Vec<char> = input.chars().collect();
     for (i, c_ref) in chars.iter().enumerate() {
-        if let None = instruction.read_from_pipe {
+        if !instruction.read_from_pipe {
             if let Some(prev_instruction) = all_instructions.last() {
-                if let StdoutTo::Pipe = prev_instruction.stdout_to { instruction.read_from_pipe = Some(()) } 
+                if let StdoutTo::Pipe = prev_instruction.stdout_to { instruction.read_from_pipe = true } 
             }
         }
         push_allowed = true;
