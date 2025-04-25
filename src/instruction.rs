@@ -10,9 +10,9 @@ pub enum StdoutTo {
 #[derive(Debug)]
 pub struct Instruction {
     pub command: Vec<String>,           //Command to execute
-    pub read_from_pipe: bool, //Whether or not this instruction follows a pipe
-    pub stdout_to: StdoutTo,        //See enum StdoutTo
-    pub filename: String,           //Empty if not writing stdout to file
+    pub read_from_pipe: bool,           //Whether or not this instruction follows a pipe
+    pub stdout_to: StdoutTo,            //See enum StdoutTo
+    pub filename: String,               //Empty if not writing stdout to file
     pub subcommand_indices: Vec<usize>, //Indices of subcommands within this command
 }
 impl Instruction {

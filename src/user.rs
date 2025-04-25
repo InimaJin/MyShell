@@ -20,9 +20,9 @@ For managing user input aspects, such as
 arrow key functionality (cursor movement, history navigation) etc.
 */
 pub struct Input {
-    pub stdout: Stdout, //For writing to stdout
-    pub input: Vec<char>,       //Vector holding user's input, updated in real time
-    input_cursor: usize,        //x-location of terminal cursor relative to prompt (leftmost is 0)
+    pub stdout: Stdout,   //For writing to stdout
+    pub input: Vec<char>, //Vector holding user's input, updated in real time
+    input_cursor: usize,  //x-location of terminal cursor relative to prompt (leftmost is 0)
 }
 pub struct Output;
 

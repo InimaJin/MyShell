@@ -28,7 +28,9 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
     for (i, c_ref) in chars.iter().enumerate() {
         if !instruction.read_from_pipe {
             if let Some(prev_instruction) = all_instructions.last() {
-                if let StdoutTo::Pipe = prev_instruction.stdout_to { instruction.read_from_pipe = true } 
+                if let StdoutTo::Pipe = prev_instruction.stdout_to {
+                    instruction.read_from_pipe = true
+                }
             }
         }
         push_allowed = true;

@@ -4,7 +4,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command},
 };
 
 use crate::{
@@ -12,21 +12,21 @@ use crate::{
     text_processing, utils,
 };
 
+use os_pipe::{self, PipeWriter};
+
 pub struct Session {
     pub cwd: PathBuf,        //Current working directory
     pub exit_code: String,   //Status of last executed program
     dir_stack: Vec<PathBuf>, //For pushd/ popd
-    pipe: Vec<u8>,           //Stdout from command run in previous iteration, as bytes
 }
 
 impl Session {
-    const BUILTINS: [&str; 5] = ["cd", "pwd", "pushd", "popd", "history"];
+    const BUILTINS: [&'static str; 5] = ["cd", "pwd", "pushd", "popd", "history"];
     pub fn new() -> Self {
         Session {
             cwd: env::current_dir().unwrap_or(PathBuf::new()),
             exit_code: String::from("0"),
             dir_stack: vec![],
-            pipe: vec![],
         }
     }
 
@@ -47,8 +47,13 @@ impl Session {
         input: &str,
         as_subcommand: bool,
     ) -> Result<Option<String>, Box<dyn Error>> {
+        //Reading end of a pipe, if piping is used. Must be in outer scope because:
+        //Writer process creates the pipe. The reading end will be connected to the stdin
+        //of the succeeding process, so pipe_reader must survive until the next iteration.
+        let mut pipe_reader = None;
         let mut instructions = text_processing::parse_input(input)?;
-        for instruction in instructions.iter_mut() {
+        let instructions_count = instructions.len();
+        for (instruction_index, instruction) in instructions.iter_mut().enumerate() {
             let program = instruction.command[0].clone();
             if program == "ls" {
                 instruction.command.insert(1, "--color=auto".to_string());
@@ -68,38 +73,41 @@ impl Session {
             }
 
             if Self::BUILTINS.contains(&&program[..]) {
-                self.run_builtin(instruction, as_subcommand)?;
+                let mut pipe_writer = None;
+                if let StdoutTo::Pipe = instruction.stdout_to {
+                    let (pr, pw) = os_pipe::pipe()?;
+                    pipe_reader = Some(pr);
+                    pipe_writer = Some(pw);
+                }
+                self.run_builtin(instruction, pipe_writer, as_subcommand)?;
             } else {
                 let mut process_builder = Command::new(&program[..]);
                 process_builder.args(&instruction.command[1..]);
 
-
-                let mut stdio_handle;
-                match instruction.stdout_to {
-                    StdoutTo::Stdout => {
-                        //Send stdout of process to stdout
-                        stdio_handle = Stdio::inherit();
-                    }
-                    StdoutTo::Pipe => {
-                        //Send stdout of process to pipe for next command
-                        stdio_handle = Stdio::piped();
-                    }
-                    StdoutTo::File(_) => {
-                        stdio_handle = Stdio::piped();
-                    }
-                }
-
-                if as_subcommand {
-                    stdio_handle = Stdio::piped();
-                }
-
-                process_builder.stdout(stdio_handle);
-
-                //If current iteration's command (instruction) follows a pipe
+                //If instruction follows a pipe, connect stdin of process to pipe created by
+                //instruction from previous iteration.
                 if instruction.read_from_pipe {
-                    process_builder.stdin(Stdio::piped());
+                    process_builder.stdin(pipe_reader.take().unwrap());
                 }
-
+                
+                let mut set_up_pipe = as_subcommand;
+                match instruction.stdout_to {
+                    StdoutTo::Stdout => {}
+                    StdoutTo::Pipe => {
+                        set_up_pipe = true;
+                    }
+                    StdoutTo::File(_) => {}
+                }
+                
+                if set_up_pipe {
+                    if let Ok((reader, writer)) = os_pipe::pipe() {
+                        //pipe_reader needs to be accessed by succeeding instruction in pipe chain.
+                        pipe_reader = Some(reader);
+                        //PipeWriter only needed here.
+                        process_builder.stdout(writer);
+                    }
+                }
+                
                 let mut current_process: Child;
                 if let Ok(child) = process_builder.spawn() {
                     current_process = child;
@@ -107,39 +115,29 @@ impl Session {
                     self.exit_code = "?".to_string();
                     return Err(Box::from(format!("Command '{}' not found.", program)));
                 }
-                //Some(), if the stdin of current_process is being captured.
-                //i.e., this only executes if instruction.read_from_pipe == true
-                if let Some(mut child_stdin) = current_process.stdin.take() {
-                    //Write stdout from previous command (now in pipe) to stdin of this process
-                    child_stdin.write(&self.pipe)?;
-                }
-                //Some(), if stdout of current_process is being captured
-                if let Some(mut child_stdout) = current_process.stdout.take() {
-                    self.pipe.clear();
-                    child_stdout.read_to_end(&mut self.pipe)?;
-                    if let StdoutTo::File(mode) = instruction.stdout_to {
-                        self.write_to_file(&instruction, mode)?;
-                    }
-                }
 
-                //Wait for process to finish and collect exit status
-                if let Ok(exit_status) = current_process.wait() {
-                    if let Some(code) = exit_status.code() {
-                        self.exit_code = code.to_string();
+                if instruction_index == instructions_count - 1 {
+                    //Wait for process to finish and collect exit status
+                    if let Ok(exit_status) = current_process.wait() {
+                        if let Some(code) = exit_status.code() {
+                            self.exit_code = code.to_string();
+                        } else {
+                            //No exit code (process was terminated by a signal)
+                            self.exit_code = "!".to_string();
+                        }
                     } else {
-                        //No exit code (process was terminated by a signal)
-                        self.exit_code = "!".to_string();
+                        self.exit_code = "?".to_string();
                     }
-                } else {
-                    self.exit_code = "?".to_string();
                 }
             }
         }
 
         if as_subcommand {
-            let mut command_output = String::from_utf8(self.pipe.clone())?;
-            command_output = command_output.trim().to_string();
-            return Ok(Some(command_output));
+            let mut command_output = String::new();
+            if let Some(mut pr) = pipe_reader {
+                pr.read_to_string(&mut command_output)?;
+            }
+            return Ok(Some(String::from(command_output.trim())));
         }
 
         Ok(None)
@@ -152,6 +150,7 @@ impl Session {
     fn run_builtin(
         &mut self,
         instruction: &Instruction,
+        pipe_writer: Option<PipeWriter>, //Some(), if this instruction precedes a pipe.
         as_subcommand: bool,
     ) -> Result<(), Box<dyn Error>> {
         let mut output = String::new();
@@ -165,7 +164,7 @@ impl Session {
                 self.cwd = env::current_dir()?;
             }
             "pwd" => {
-                output = format!("{}\r\n", self.cwd.display().to_string());
+                output = format!("{}", self.cwd.display().to_string());
             }
             "pushd" => {
                 if let Some(target_path) = instruction.command.get(1) {
@@ -209,30 +208,25 @@ impl Session {
                 let history_result = utils::read_history()?;
                 let history_string = String::from_utf8(history_result)?;
                 for (i, line) in history_string.lines().enumerate() {
-                    output.push_str(&format!("{} {}\r\n", i, line));
+                    output.push_str(&format!("{} {}", i, line));
                 }
             }
             _ => {}
         }
 
-        //Executes if builtin command wants to print something
         if !output.is_empty() {
-            let write_to_pipe = if let StdoutTo::Stdout = instruction.stdout_to {
-                false
+            if let Some(mut pw) = pipe_writer {
+                pw.write(format!("{}\r\n", output).as_bytes())?;
             } else {
-                true
-            };
-
-            if !as_subcommand && !write_to_pipe {
-                print!("{}", output);
+                println!("{}\r", output);
                 return Ok(());
             }
 
-            self.pipe.clear();
-            write!(&mut self.pipe, "{}", output)?;
+            /*TODO
             if let StdoutTo::File(mode) = instruction.stdout_to {
                 self.write_to_file(instruction, mode)?;
             }
+             */
         }
 
         Ok(())
@@ -256,11 +250,11 @@ impl Session {
         let mut data_to_write = Vec::new();
         match mode {
             'o' => {
-                data_to_write.append(&mut self.pipe);
+                //data_to_write.append(&mut self.pipe);
             }
             'a' => {
                 data_to_write = fs::read(&instruction.filename)?;
-                data_to_write.append(&mut self.pipe);
+                //data_to_write.append(&mut self.pipe);
             }
             _ => {}
         }
