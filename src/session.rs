@@ -1,7 +1,6 @@
 use std::{
     env,
     error::Error,
-    fs,
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command},
@@ -38,7 +37,7 @@ impl Session {
     is always redirected to the subsequent command.
 
     If a subcommand (e.g. ${whoami}) is being executed, it returns
-    Ok(Some(Stdout_of_subcommand_as_string)), otherwise Ok(None).
+    Ok(Some(stdout_of_subcommand_as_string)), otherwise Ok(None).
 
     Also manages the exit code.
     */
@@ -51,6 +50,7 @@ impl Session {
         //Writer process creates the pipe. The reading end will be connected to the stdin
         //of the succeeding process, so pipe_reader must survive until the next iteration.
         let mut pipe_reader = None;
+        
         let mut instructions = text_processing::parse_input(input)?;
         let instructions_count = instructions.len();
         for (instruction_index, instruction) in instructions.iter_mut().enumerate() {
@@ -58,9 +58,7 @@ impl Session {
             if program == "ls" {
                 instruction.command.insert(1, "--color=auto".to_string());
                 //Since we have inserted something at index 1, all the subcommand indices are now 1 below what they should be
-                for subcommand_i in instruction.subcommand_indices.iter_mut() {
-                    *subcommand_i += 1;
-                }
+                instruction.subcommand_indices.iter_mut().for_each(|index| *index+=1);
             }
 
             for &subcommand_i in instruction.subcommand_indices.iter() {
@@ -72,14 +70,14 @@ impl Session {
                 instruction.command[subcommand_i] = output.unwrap();
             }
 
-            if Self::BUILTINS.contains(&&program[..]) {
+            if Self::BUILTINS.contains(&program.as_str()) {
                 let mut pipe_writer = None;
                 if let StdoutTo::Pipe = instruction.stdout_to {
                     let (pr, pw) = os_pipe::pipe()?;
                     pipe_reader = Some(pr);
                     pipe_writer = Some(pw);
                 }
-                self.run_builtin(instruction, pipe_writer, as_subcommand)?;
+                self.run_builtin(instruction, pipe_writer)?;
             } else {
                 let mut process_builder = Command::new(&program[..]);
                 process_builder.args(&instruction.command[1..]);
@@ -89,14 +87,22 @@ impl Session {
                 if instruction.read_from_pipe {
                     process_builder.stdin(pipe_reader.take().unwrap());
                 }
-                
+
+                //Subcommands also write to a pipe 
                 let mut set_up_pipe = as_subcommand;
                 match instruction.stdout_to {
                     StdoutTo::Stdout => {}
                     StdoutTo::Pipe => {
                         set_up_pipe = true;
                     }
-                    StdoutTo::File(_) => {}
+                    StdoutTo::File(mode) => {
+                        if instruction.filename.is_empty() {
+                            return Err(Box::from(format!("Please specify output file for '{}'", program)));
+                        }
+
+                        let file = utils::open_file(&instruction.filename, mode)?;
+                        process_builder.stdout(file);
+                    }
                 }
                 
                 if set_up_pipe {
@@ -116,8 +122,9 @@ impl Session {
                     return Err(Box::from(format!("Command '{}' not found.", program)));
                 }
 
+
                 if instruction_index == instructions_count - 1 {
-                    //Wait for process to finish and collect exit status
+                    //Wait for last process to finish and collect exit status
                     if let Ok(exit_status) = current_process.wait() {
                         if let Some(code) = exit_status.code() {
                             self.exit_code = code.to_string();
@@ -134,6 +141,8 @@ impl Session {
 
         if as_subcommand {
             let mut command_output = String::new();
+            //The last instruction within a subcommand writes to a pipe, but no process reads it.
+            //Instead, it's read to a String.
             if let Some(mut pr) = pipe_reader {
                 pr.read_to_string(&mut command_output)?;
             }
@@ -151,7 +160,6 @@ impl Session {
         &mut self,
         instruction: &Instruction,
         pipe_writer: Option<PipeWriter>, //Some(), if this instruction precedes a pipe.
-        as_subcommand: bool,
     ) -> Result<(), Box<dyn Error>> {
         let mut output = String::new();
         match instruction.command[0].as_str() {
@@ -206,8 +214,11 @@ impl Session {
             }
             "history" => {
                 let history_result = utils::read_history()?;
-                let history_string = String::from_utf8(history_result)?;
-                for (i, line) in history_string.lines().enumerate() {
+                let history = String::from_utf8(history_result)?;
+                for (i, line) in history.lines().enumerate() {
+                    if i != 0 {
+                        output.push_str("\n");
+                    }
                     output.push_str(&format!("{} {}", i, line));
                 }
             }
@@ -215,52 +226,19 @@ impl Session {
         }
 
         if !output.is_empty() {
-            if let Some(mut pw) = pipe_writer {
-                pw.write(format!("{}\r\n", output).as_bytes())?;
-            } else {
-                println!("{}\r", output);
-                return Ok(());
-            }
-
-            /*TODO
+            output.push_str("\r\n");
             if let StdoutTo::File(mode) = instruction.stdout_to {
-                self.write_to_file(instruction, mode)?;
+                let mut file = utils::open_file(&instruction.filename, mode)?;
+                file.write(output.as_bytes())?;
+            } else {
+                if let Some(mut pw) = pipe_writer {
+                    pw.write(output.as_bytes())?;
+                } else {
+                    print!("{}", output);
+                    return Ok(());
+                }
             }
-             */
         }
-
-        Ok(())
-    }
-
-    /*
-    Invoked by '>' operator.
-    Writes the stdout (held in the pipe) to a file.
-    */
-    fn write_to_file(
-        &mut self,
-        instruction: &Instruction,
-        mode: char,
-    ) -> Result<(), Box<dyn Error>> {
-        if instruction.filename.is_empty() {
-            let program = &instruction.command[0];
-            let msg = format!("Please specify target file for output of '{}'.", program);
-            return Err(Box::from(msg));
-        }
-
-        let mut data_to_write = Vec::new();
-        match mode {
-            'o' => {
-                //data_to_write.append(&mut self.pipe);
-            }
-            'a' => {
-                data_to_write = fs::read(&instruction.filename)?;
-                //data_to_write.append(&mut self.pipe);
-            }
-            _ => {}
-        }
-
-        fs::write(&instruction.filename, &data_to_write)?;
-
         Ok(())
     }
 }

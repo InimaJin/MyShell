@@ -78,19 +78,23 @@ pub fn parse_input(input: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
                 let home_pathbuf = utils::home_dir()?;
                 temp_string = format!("{}", home_pathbuf.display());
             } else if c == '>' {
-                push_allowed = false;
-                if let StdoutTo::File(_) = instruction.stdout_to {
-                    continue;
-                }
-                //Overwrite file
-                let mut write_mode = 'o';
-                if let Some(next_char) = chars.get(i + 1) {
-                    if *next_char == c {
-                        //Append to file
-                        write_mode = 'a';
+                if subs_opened > 0 {
+                    push_allowed = true;
+                } else {
+                    push_allowed = false;
+                    if let StdoutTo::File(_) = instruction.stdout_to {
+                        continue;
                     }
+                    //Overwrite file
+                    let mut write_mode = 'o';
+                    if let Some(next_char) = chars.get(i + 1) {
+                        if *next_char == c {
+                            //Append to file
+                            write_mode = 'a';
+                        }
+                    }
+                    instruction.stdout_to = StdoutTo::File(write_mode);
                 }
-                instruction.stdout_to = StdoutTo::File(write_mode);
             } else if c == '$' {
                 if let Some('{') = chars.get(i + 1) {
                     subs_opened += 1;

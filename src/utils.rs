@@ -1,5 +1,11 @@
 use home;
-use std::{error::Error, fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{
+    error::Error,
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    io::Write
+};
 
 pub fn home_dir() -> Result<PathBuf, String> {
     if let Some(pathbuf) = home::home_dir() {
@@ -27,6 +33,25 @@ pub fn config_dir() -> Result<PathBuf, Box<dyn Error>> {
 }
 
 /*
+(Creates and) opens and returns a file with options according to the specified writing mode.
+    */ 
+pub fn open_file(filename: &str, mode: char) -> Result<fs::File, Box<dyn Error>> {
+    let pathbuf = PathBuf::from(filename);
+    if pathbuf.is_dir() {
+        return Err(format!("'{}' is a directory.", filename).into());
+    }
+
+    let mut file_opts = fs::OpenOptions::new();
+    file_opts.create(true);
+    if mode == 'a' {
+        file_opts.append(true);
+    } else {
+        file_opts.truncate(true).write(true);
+    }
+    Ok(file_opts.open(pathbuf)?)
+}
+
+/*
 Writes the user's input to history file located at the path <config_dir>/history
 */
 pub fn write_history(input: &str) -> Result<(), Box<dyn Error>> {
@@ -36,14 +61,10 @@ pub fn write_history(input: &str) -> Result<(), Box<dyn Error>> {
 
     let mut histfile_path = config_dir()?;
     histfile_path.push("history");
-    let mut history: Vec<u8> = Vec::new();
-    if histfile_path.exists() {
-        history = read_history()?;
+    if let Some(path) = histfile_path.to_str() {
+        let mut file = open_file(path, 'a')?;
+        file.write(format!("{}\n", input).as_bytes())?;
     }
-    for b in format!("{}\n", input).as_bytes() {
-        history.push(*b);
-    }
-    fs::write(&histfile_path, history)?;
     Ok(())
 }
 
@@ -56,6 +77,7 @@ pub fn read_history() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(fs::read(histfile_path)?)
 }
 
+//TODO
 pub fn bin_dir_contents() -> Result<Vec<String>, Box<dyn Error>> {
     let mut contents = Vec::new();
     if let Ok(read_dir) = fs::read_dir("/bin/") {
